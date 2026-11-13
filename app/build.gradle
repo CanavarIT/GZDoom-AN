@@ -1,0 +1,165 @@
+plugins {
+    id 'com.android.application'
+}
+
+// ---------------------------------------------------------------------------
+// Third party sources that are downloaded once into app/.deps
+// (put the extracted folders there yourself if you build offline)
+// ---------------------------------------------------------------------------
+def sdlVersion = '2.30.11'
+def alVersion  = '1.23.1'
+def depsDir    = file("$projectDir/.deps")
+def sdlDir     = new File(depsDir, "SDL2-$sdlVersion")
+def alDir      = new File(depsDir, "openal-soft-$alVersion")
+def gzDir      = file("$rootDir/gzdoom")
+
+def fetchDep = { String url, File targetDir, List<String> keyFiles ->
+    def flag = new File(depsDir, ".extracting-${targetDir.name}")
+    def complete = { !flag.exists() && keyFiles.every { new File(targetDir, it).exists() } }
+    if (complete()) return
+
+    // Missing or only partially unpacked (interrupted earlier): start from scratch
+    if (targetDir.exists()) {
+        logger.lifecycle("Removing incomplete $targetDir")
+        targetDir.deleteDir()
+    }
+    depsDir.mkdirs()
+    def archive = new File(depsDir, url.substring(url.lastIndexOf('/') + 1))
+    archive.delete()
+    logger.lifecycle("Downloading $url")
+    ant.get(src: url, dest: archive, retries: 3)
+    flag.text = 'extracting'
+    ant.untar(src: archive, dest: depsDir, compression: 'gzip')
+    archive.delete()
+    flag.delete()
+    if (!complete()) {
+        targetDir.deleteDir()
+        throw new GradleException("Unpacking $url failed: $targetDir is incomplete. Check free space and try again.")
+    }
+}
+
+fetchDep("https://github.com/libsdl-org/SDL/releases/download/release-${sdlVersion}/SDL2-${sdlVersion}.tar.gz", sdlDir,
+        ['CMakeLists.txt', 'src/thread/pthread/SDL_systhread.c', 'src/main/android/SDL_android_main.c',
+         'android-project/app/src/main/java/org/libsdl/app/SDLActivity.java'])
+fetchDep("https://github.com/kcat/openal-soft/archive/refs/tags/${alVersion}.tar.gz", alDir,
+        ['CMakeLists.txt', 'alc/alc.cpp', 'common/alcomplex.cpp'])
+
+android {
+    namespace 'com.az.doom'
+    compileSdk 35
+    ndkVersion '29.0.14033849'
+
+    defaultConfig {
+        applicationId 'com.az.doom'
+        minSdk 24
+        targetSdk 34
+        versionCode 1
+        versionName '1.0'
+
+        ndk {
+            // Add 'armeabi-v7a' and/or 'x86_64' here if you need them
+            abiFilters 'arm64-v8a'
+        }
+
+        externalNativeBuild {
+            cmake {
+                arguments '-DANDROID_STL=c++_shared',
+                          '-DANDROID_SUPPORT_FLEXIBLE_PAGE_SIZES=ON',
+                          "-DSDL2_SRC_DIR=${sdlDir}",
+                          "-DOPENAL_SRC_DIR=${alDir}",
+                          "-DGZDOOM_SRC_DIR=${gzDir}"
+            }
+        }
+    }
+
+    externalNativeBuild {
+        cmake {
+            path 'src/main/cpp/CMakeLists.txt'
+            version '3.31.6'
+        }
+    }
+
+    buildTypes {
+        release {
+            minifyEnabled false
+            // Signed with the debug key so that the APK can be installed directly.
+            // Replace with your own signingConfig for publishing.
+            signingConfig signingConfigs.debug
+        }
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+
+    packaging {
+        jniLibs {
+            // SDL and the engine use dlopen() on some libraries: keep them extracted
+            useLegacyPackaging true
+        }
+    }
+
+    lint {
+        abortOnError false
+        checkReleaseBuilds false
+    }
+
+    androidResources {
+        noCompress 'pk3', 'sf2', 'wopl', 'wopn'
+    }
+
+    sourceSets {
+        main {
+            // SDLActivity & friends come straight from the SDL release
+            java.srcDir new File(sdlDir, 'android-project/app/src/main/java')
+            pk3Specs.keySet().each { n -> assets.srcDir genAssets.map { it.dir("pk3_${n}") } }
+            assets.srcDir genAssets.map { it.dir('data') }
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Engine resources (gzdoom.pk3, ...) are packed by Gradle instead of zipdir
+// ---------------------------------------------------------------------------
+
+
+def pk3Tasks = []
+pk3Specs.each { pk3Name, srcPath ->
+    def t = tasks.register("pack_${pk3Name.replace('.', '_')}", Zip) {
+        from(new File(gzDir, srcPath)) {
+            exclude '**/.*'
+            exclude '**/*~'
+            exclude '**/*.bak'
+        }
+        archiveFileName = pk3Name
+        destinationDirectory = genAssets.map { it.dir("pk3_${pk3Name}/gzdoom") }
+        entryCompression = ZipEntryCompression.DEFLATED
+        includeEmptyDirs = false
+        preserveFileTimestamps = false
+        reproducibleFileOrder = true
+    }
+    pk3Tasks << t
+}
+
+def copyGzData = tasks.register('copyGzData', Copy) {
+    from(new File(gzDir, 'soundfont/gzdoom.sf2')) { into 'soundfonts' }
+    from(new File(gzDir, 'fm_banks')) {
+        include '*.wopl', '*.wopn'
+        into 'fm_banks'
+    }
+    into genAssets.map { it.dir('data/gzdoom') }
+}
+
+def gzAssets = tasks.register('gzAssets') {
+    dependsOn pk3Tasks
+    dependsOn copyGzData
+}
+
+// Anything that looks at the assets directory must run after it has been generated
+tasks.configureEach { t ->
+    if (t.name != 'gzAssets' && !t.name.startsWith('pack_') && t.name != 'copyGzData'
+            && (t.name.contains('Assets') || t.name.startsWith('lint') || t.name.contains('Lint'))) {
+        t.dependsOn gzAssets
+    }
+}

@@ -1,0 +1,45 @@
+# Gradle / Android Studio / AndroidIDE
+.gradle/
+build/
+app/build/
+app/.cxx/
+.cxx/
+local.properties
+captures/
+*.iml
+.idea/
+.vscode/
+.externalNativeBuild/
+
+# Third-party sources downloaded by Gradle on the first build
+app/.deps/
+
+# Signing
+*.jks
+*.keystore
+*.p12
+
+# Build outputs
+*.apk
+*.aab
+*.ap_
+*.dex
+
+# Game data must never be committed
+*.wad
+*.WAD
+*.iwad
+*.pk3
+*.pk7
+*.ipk3
+*.ipk7
+*.pkz
+!gzdoom/**/*.pk3
+!gzdoom/**/*.wad
+
+# Local tooling junk
+*.log
+*.part
+.DS_Store
+Thumbs.db
+gzdoom/src/gitinfo.h
