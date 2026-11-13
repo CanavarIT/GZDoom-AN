@@ -85,7 +85,6 @@ app/                    Android app: Java launcher, touch controls, Gradle confi
 app/src/main/cpp/       CMake wrapper (SDL2 + OpenAL Soft + GZDoom)
 gzdoom/                 GZDoom source with the Android changes
 gzdoom/libraries/vpx_stub/   libvpx replacement
-PATCHES.md              Every change made to the GZDoom source
 ```
 
 ## License
