@@ -2,10 +2,6 @@ plugins {
     id 'com.android.application'
 }
 
-// ---------------------------------------------------------------------------
-// Third party sources that are downloaded once into app/.deps
-// (put the extracted folders there yourself if you build offline)
-// ---------------------------------------------------------------------------
 def sdlVersion = '2.30.11'
 def alVersion  = '1.23.1'
 def depsDir    = file("$projectDir/.deps")
@@ -18,7 +14,6 @@ def fetchDep = { String url, File targetDir, List<String> keyFiles ->
     def complete = { !flag.exists() && keyFiles.every { new File(targetDir, it).exists() } }
     if (complete()) return
 
-    // Missing or only partially unpacked (interrupted earlier): start from scratch
     if (targetDir.exists()) {
         logger.lifecycle("Removing incomplete $targetDir")
         targetDir.deleteDir()
@@ -44,9 +39,19 @@ fetchDep("https://github.com/libsdl-org/SDL/releases/download/release-${sdlVersi
 fetchDep("https://github.com/kcat/openal-soft/archive/refs/tags/${alVersion}.tar.gz", alDir,
         ['CMakeLists.txt', 'alc/alc.cpp', 'common/alcomplex.cpp'])
 
+def pk3Specs = [
+    'gzdoom.pk3'             : 'wadsrc/static',
+    'brightmaps.pk3'         : 'wadsrc_bm/static',
+    'lights.pk3'             : 'wadsrc_lights/static',
+    'game_support.pk3'       : 'wadsrc_extra/static',
+    'game_widescreen_gfx.pk3': 'wadsrc_widepix/static',
+]
+
+def genAssets = layout.buildDirectory.dir('generated/gzassets')
+
 android {
     namespace 'com.az.doom'
-    compileSdk 35
+    compileSdk 36
     ndkVersion '29.0.14033849'
 
     defaultConfig {
@@ -57,7 +62,6 @@ android {
         versionName '1.0'
 
         ndk {
-            // Add 'armeabi-v7a' and/or 'x86_64' here if you need them
             abiFilters 'arm64-v8a'
         }
 
@@ -82,10 +86,12 @@ android {
     buildTypes {
         release {
             minifyEnabled false
-            // Signed with the debug key so that the APK can be installed directly.
-            // Replace with your own signingConfig for publishing.
             signingConfig signingConfigs.debug
         }
+    }
+
+    buildFeatures {
+        viewBinding true
     }
 
     compileOptions {
@@ -95,7 +101,6 @@ android {
 
     packaging {
         jniLibs {
-            // SDL and the engine use dlopen() on some libraries: keep them extracted
             useLegacyPackaging true
         }
     }
@@ -111,7 +116,6 @@ android {
 
     sourceSets {
         main {
-            // SDLActivity & friends come straight from the SDL release
             java.srcDir new File(sdlDir, 'android-project/app/src/main/java')
             pk3Specs.keySet().each { n -> assets.srcDir genAssets.map { it.dir("pk3_${n}") } }
             assets.srcDir genAssets.map { it.dir('data') }
@@ -119,10 +123,12 @@ android {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Engine resources (gzdoom.pk3, ...) are packed by Gradle instead of zipdir
-// ---------------------------------------------------------------------------
-
+dependencies {
+    implementation libs.androidx.core
+    implementation libs.androidx.appcompat
+    implementation libs.material
+    implementation libs.androidx.constraintlayout
+}
 
 def pk3Tasks = []
 pk3Specs.each { pk3Name, srcPath ->
@@ -156,7 +162,6 @@ def gzAssets = tasks.register('gzAssets') {
     dependsOn copyGzData
 }
 
-// Anything that looks at the assets directory must run after it has been generated
 tasks.configureEach { t ->
     if (t.name != 'gzAssets' && !t.name.startsWith('pack_') && t.name != 'copyGzData'
             && (t.name.contains('Assets') || t.name.startsWith('lint') || t.name.contains('Lint'))) {
